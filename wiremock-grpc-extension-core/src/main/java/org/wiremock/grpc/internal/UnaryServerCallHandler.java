@@ -19,6 +19,8 @@ import static org.wiremock.grpc.dsl.GrpcResponseDefinitionBuilder.GRPC_STATUS_NA
 import static org.wiremock.grpc.dsl.GrpcResponseDefinitionBuilder.GRPC_STATUS_REASON;
 import static org.wiremock.grpc.internal.Delays.delayIfRequired;
 
+import com.github.tomakehurst.wiremock.common.LocalNotifier;
+import com.github.tomakehurst.wiremock.common.Notifier;
 import com.github.tomakehurst.wiremock.common.Pair;
 import com.github.tomakehurst.wiremock.http.HttpHeader;
 import com.github.tomakehurst.wiremock.http.StubRequestHandler;
@@ -34,18 +36,22 @@ import org.wiremock.grpc.dsl.WireMockGrpc;
 public class UnaryServerCallHandler extends BaseCallHandler
     implements ServerCalls.UnaryMethod<DynamicMessage, DynamicMessage> {
 
+  private final Notifier notifier;
+
   public UnaryServerCallHandler(
       StubRequestHandler stubRequestHandler,
       Descriptors.ServiceDescriptor serviceDescriptor,
       Descriptors.MethodDescriptor methodDescriptor,
       JsonMessageConverter jsonMessageConverter,
-      Supplier<ServerAddress> serverAddressSupplier) {
+      Supplier<ServerAddress> serverAddressSupplier,
+      Notifier notifier) {
     super(
         stubRequestHandler,
         serviceDescriptor,
         methodDescriptor,
         jsonMessageConverter,
         serverAddressSupplier);
+    this.notifier = notifier;
   }
 
   @Override
@@ -64,6 +70,7 @@ public class UnaryServerCallHandler extends BaseCallHandler
             methodDescriptor.getName(),
             jsonMessageConverter.toJson(request));
 
+    LocalNotifier.set(notifier);
     stubRequestHandler.handle(
         wireMockRequest,
         (req, resp, attributes) -> {

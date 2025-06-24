@@ -17,6 +17,7 @@ package org.wiremock.grpc.internal;
 
 import static com.github.tomakehurst.wiremock.common.Pair.pair;
 
+import com.github.tomakehurst.wiremock.common.Notifier;
 import com.github.tomakehurst.wiremock.common.Pair;
 import com.github.tomakehurst.wiremock.http.StubRequestHandler;
 import com.google.protobuf.Descriptors;
@@ -47,9 +48,10 @@ public class GrpcUtils {
       List<Descriptors.FileDescriptor> fileDescriptors,
       StubRequestHandler stubRequestHandler,
       List<ServerInterceptor> interceptors,
-      Supplier<ServerAddress> serverAddressSupplier) {
+      Supplier<ServerAddress> serverAddressSupplier,
+      Notifier notifier) {
     List<BindableService> services =
-        buildServices(fileDescriptors, stubRequestHandler, serverAddressSupplier);
+        buildServices(fileDescriptors, stubRequestHandler, serverAddressSupplier, notifier);
     final HeaderCopyingServerInterceptor headerCopyingServerInterceptor =
         new HeaderCopyingServerInterceptor();
     services.forEach(
@@ -64,7 +66,8 @@ public class GrpcUtils {
   private static List<BindableService> buildServices(
       List<Descriptors.FileDescriptor> fileDescriptors,
       StubRequestHandler stubRequestHandler,
-      Supplier<ServerAddress> serverAddressSupplier) {
+      Supplier<ServerAddress> serverAddressSupplier,
+      Notifier notifier) {
     final TypeRegistry.Builder typeRegistryBuilder = TypeRegistry.newBuilder();
     fileDescriptors.forEach(
         fileDescriptor -> fileDescriptor.getMessageTypes().forEach(typeRegistryBuilder::add));
@@ -115,7 +118,8 @@ public class GrpcUtils {
                                                   serviceDescriptor,
                                                   methodDescriptor,
                                                   jsonMessageConverter,
-                                                  serverAddressSupplier)))
+                                                  serverAddressSupplier,
+                                                  notifier)))
                                   .toList();
 
                       methodDescriptorHandlerPairs.stream()
@@ -140,7 +144,8 @@ public class GrpcUtils {
       Descriptors.ServiceDescriptor serviceDescriptor,
       Descriptors.MethodDescriptor methodDescriptor,
       JsonMessageConverter jsonMessageConverter,
-      Supplier<ServerAddress> serverAddressSupplier) {
+      Supplier<ServerAddress> serverAddressSupplier,
+      Notifier notifier) {
     return methodDescriptor.isClientStreaming()
         ? ServerCalls.asyncClientStreamingCall(
             new ClientStreamingServerCallHandler(
@@ -148,14 +153,16 @@ public class GrpcUtils {
                 serviceDescriptor,
                 methodDescriptor,
                 jsonMessageConverter,
-                serverAddressSupplier))
+                serverAddressSupplier,
+                notifier))
         : ServerCalls.asyncUnaryCall(
             new UnaryServerCallHandler(
                 stubRequestHandler,
                 serviceDescriptor,
                 methodDescriptor,
                 jsonMessageConverter,
-                serverAddressSupplier));
+                serverAddressSupplier,
+                notifier));
   }
 
   public static MethodDescriptor<DynamicMessage, DynamicMessage> buildMessageDescriptorInstance(

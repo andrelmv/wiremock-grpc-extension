@@ -18,6 +18,8 @@ package org.wiremock.grpc.internal;
 import static org.wiremock.grpc.dsl.GrpcResponseDefinitionBuilder.GRPC_STATUS_NAME;
 import static org.wiremock.grpc.dsl.GrpcResponseDefinitionBuilder.GRPC_STATUS_REASON;
 
+import com.github.tomakehurst.wiremock.common.LocalNotifier;
+import com.github.tomakehurst.wiremock.common.Notifier;
 import com.github.tomakehurst.wiremock.common.Pair;
 import com.github.tomakehurst.wiremock.http.HttpHeader;
 import com.github.tomakehurst.wiremock.http.StubRequestHandler;
@@ -34,18 +36,22 @@ import org.wiremock.grpc.dsl.WireMockGrpc;
 public class ClientStreamingServerCallHandler extends BaseCallHandler
     implements ServerCalls.ClientStreamingMethod<DynamicMessage, DynamicMessage> {
 
+  private final Notifier notifier;
+
   public ClientStreamingServerCallHandler(
       StubRequestHandler stubRequestHandler,
       Descriptors.ServiceDescriptor serviceDescriptor,
       Descriptors.MethodDescriptor methodDescriptor,
       JsonMessageConverter jsonMessageConverter,
-      Supplier<ServerAddress> serverAddressSupplier) {
+      Supplier<ServerAddress> serverAddressSupplier,
+      Notifier notifier) {
     super(
         stubRequestHandler,
         serviceDescriptor,
         methodDescriptor,
         jsonMessageConverter,
         serverAddressSupplier);
+    this.notifier = notifier;
   }
 
   @Override
@@ -75,6 +81,7 @@ public class ClientStreamingServerCallHandler extends BaseCallHandler
                 methodDescriptor.getName(),
                 jsonMessageConverter.toJson(request));
 
+        LocalNotifier.set(notifier);
         stubRequestHandler.handle(
             wireMockRequest,
             (req, resp, attributes) -> {

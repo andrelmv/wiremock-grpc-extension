@@ -80,7 +80,7 @@ public class Jetty12GrpcHttpServerFactory implements GrpcHttpServerFactory {
               "Must call initProtoDescriptorStore before using the server factory");
         }
 
-        GrpcFilter grpcFilter = new GrpcFilter(stubRequestHandler);
+        GrpcFilter grpcFilter = new GrpcFilter(stubRequestHandler, options.notifier());
         Runnable loadFileDescriptors =
             () -> grpcFilter.loadFileDescriptors(protoDescriptorStore.loadAllFileDescriptors());
         reloadNotifier.addListener(loadFileDescriptors);

@@ -41,9 +41,12 @@ public class GrpcFilter extends HttpFilter {
   //  private GrpcServlet grpcServlet;
   private ServletAdapter servletAdapter;
   private final StubRequestHandler stubRequestHandler;
+  private final com.github.tomakehurst.wiremock.common.Notifier notifier;
 
-  public GrpcFilter(StubRequestHandler stubRequestHandler) {
+  public GrpcFilter(
+      StubRequestHandler stubRequestHandler, com.github.tomakehurst.wiremock.common.Notifier notifier) {
     this.stubRequestHandler = stubRequestHandler;
+    this.notifier = notifier;
   }
 
   public void loadFileDescriptors(List<Descriptors.FileDescriptor> fileDescriptors) {
@@ -54,7 +57,12 @@ public class GrpcFilter extends HttpFilter {
       List<Descriptors.FileDescriptor> fileDescriptors, List<ServerInterceptor> interceptors) {
     servletAdapter =
         buildAndBindServices(
-                new ServletServerBuilder(), fileDescriptors, stubRequestHandler, interceptors, ServerAddressHolder::get)
+                new ServletServerBuilder(),
+                fileDescriptors,
+                stubRequestHandler,
+                interceptors,
+                ServerAddressHolder::get,
+                notifier)
             .buildServletAdapter();
   }
 
