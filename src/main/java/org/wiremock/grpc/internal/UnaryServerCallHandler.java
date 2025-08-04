@@ -19,6 +19,9 @@ import static org.wiremock.grpc.dsl.GrpcResponseDefinitionBuilder.GRPC_STATUS_NA
 import static org.wiremock.grpc.dsl.GrpcResponseDefinitionBuilder.GRPC_STATUS_REASON;
 import static org.wiremock.grpc.internal.Delays.delayIfRequired;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.MappingIterator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.common.LocalNotifier;
 import com.github.tomakehurst.wiremock.common.Notifier;
 import com.github.tomakehurst.wiremock.common.Pair;
@@ -30,12 +33,15 @@ import com.google.protobuf.DynamicMessage;
 import io.grpc.Status;
 import io.grpc.stub.ServerCalls;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
 import org.wiremock.grpc.dsl.WireMockGrpc;
 
 public class UnaryServerCallHandler extends BaseCallHandler
     implements ServerCalls.UnaryMethod<DynamicMessage, DynamicMessage> {
 
   private final Notifier notifier;
+
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
   public UnaryServerCallHandler(
       StubRequestHandler stubRequestHandler,
@@ -92,12 +98,23 @@ public class UnaryServerCallHandler extends BaseCallHandler
             return;
           }
 
-          DynamicMessage.Builder messageBuilder =
-              DynamicMessage.newBuilder(methodDescriptor.getOutputType());
+          try (MappingIterator<JsonNode> iterator =
+              objectMapper.readerFor(JsonNode.class).readValues(resp.getBody())) {
 
-          final DynamicMessage response =
-              jsonMessageConverter.toMessage(resp.getBodyAsString(), messageBuilder);
-          responseObserver.onNext(response);
+            while (iterator.hasNext()) {
+              JsonNode node = iterator.next();
+
+              final DynamicMessage.Builder messageBuilder =
+                  DynamicMessage.newBuilder(methodDescriptor.getOutputType());
+              final DynamicMessage response =
+                  jsonMessageConverter.toMessage(node.toString(), messageBuilder);
+
+              responseObserver.onNext(response);
+            }
+          } catch (IOException e) {
+            responseObserver.onError(
+                Status.INTERNAL.withDescription(e.getMessage()).withCause(e).asRuntimeException());
+          }
           responseObserver.onCompleted();
         },
         ServeEvent.of(wireMockRequest));
