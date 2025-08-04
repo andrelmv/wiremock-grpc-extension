@@ -18,6 +18,7 @@ plugins {
   id 'com.diffplug.spotless' version '7.0.2'
   id "com.google.protobuf" version "0.9.4"
   id 'io.github.gradle-nexus.publish-plugin' version "2.0.0"
+  id 'org.jetbrains.kotlin.jvm'
 }
 
 repositories {
@@ -30,8 +31,6 @@ group 'org.wiremock'
 allprojects {
   version = "0.10.0"
 
-  sourceCompatibility = 11
-  targetCompatibility = 11
 
   ext {
     versions = [
@@ -120,6 +119,7 @@ dependencies {
     exclude group: 'org.eclipse.jetty'
     exclude group: 'org.eclipse.jetty.http2'
   })
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
 }
 
 task sourcesJar(type: Jar, dependsOn: classes) {
@@ -274,6 +274,9 @@ task 'set-snapshot-version' {
 
     updateFiles(currentVersion, nextVersion)
   }
+}
+kotlin {
+  jvmToolchain(11)
 }
 
 void updateFiles(String currentVersion, String nextVersion) {

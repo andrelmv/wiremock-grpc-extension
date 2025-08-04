@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023-2024 Thomas Akehurst
+ * Copyright (C) 2023-2025 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -85,7 +85,7 @@ public class GrpcHttpServerFactory implements HttpServerFactory, AdminApiExtensi
       protected void decorateMockServiceContextBeforeConfig(
           ServletContextHandler mockServiceContext) {
 
-        grpcFilter = new GrpcFilter(stubRequestHandler);
+        grpcFilter = new GrpcFilter(stubRequestHandler, options.notifier());
         loadFileDescriptors();
         final FilterHolder filterHolder = new FilterHolder(grpcFilter);
         mockServiceContext.addFilter(filterHolder, "/*", EnumSet.of(DispatcherType.REQUEST));

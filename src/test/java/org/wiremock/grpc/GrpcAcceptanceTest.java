@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023-2024 Thomas Akehurst
+ * Copyright (C) 2023-2025 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,9 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.iterableWithSize;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
+import static org.hamcrest.collection.IsEmptyCollection.empty;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -85,6 +87,7 @@ public class GrpcAcceptanceTest {
   GreetingsClient greetingsClient;
   AnotherGreetingsClient anotherGreetingsClient;
   WireMock wireMock;
+  TestNotifier notifier;
 
   @RegisterExtension
   public static WireMockExtension wm =
@@ -93,7 +96,8 @@ public class GrpcAcceptanceTest {
               wireMockConfig()
                   .dynamicPort()
                   .withRootDirectory("src/test/resources/wiremock")
-                  .extensions(new GrpcExtensionFactory()))
+                  .extensions(new GrpcExtensionFactory())
+                  .notifier(new TestNotifier()))
           .build();
 
   public static Stream<Arguments> statusProvider() {
@@ -117,6 +121,9 @@ public class GrpcAcceptanceTest {
     anotherChannel =
         ManagedChannelBuilder.forAddress("localhost", wm.getPort()).usePlaintext().build();
     anotherGreetingsClient = new AnotherGreetingsClient(anotherChannel);
+
+    notifier = (TestNotifier) wm.getOptions().notifier();
+    notifier.clear();
   }
 
   @AfterEach
@@ -139,6 +146,9 @@ public class GrpcAcceptanceTest {
     String greeting = greetingsClient.greet("Tom");
 
     assertThat(greeting, is("Hello Tom"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -151,6 +161,9 @@ public class GrpcAcceptanceTest {
     String greeting = greetingsClient.greet("Tom");
 
     assertThat(greeting, is("Hello Tom"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -161,6 +174,9 @@ public class GrpcAcceptanceTest {
     String greeting = greetingsClient.greet("Whatever");
 
     assertThat(greeting, is("Hi Tom from JSON"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -172,6 +188,9 @@ public class GrpcAcceptanceTest {
     String greeting = greetingsClient.greet("Whatever");
 
     assertThat(greeting, is("Hi Tom from object"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -184,6 +203,9 @@ public class GrpcAcceptanceTest {
     assertThat(greetingsClient.greet("Tom"), is("OK"));
 
     assertThrows(StatusRuntimeException.class, () -> greetingsClient.greet("Wrong"));
+
+    assertSomeErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -200,6 +222,9 @@ public class GrpcAcceptanceTest {
     assertThat(
         exception.getMessage(),
         is("UNIMPLEMENTED: No matching stub mapping found for gRPC request"));
+
+    assertSomeErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @ParameterizedTest
@@ -223,6 +248,9 @@ public class GrpcAcceptanceTest {
     StatusRuntimeException exception =
         assertThrows(StatusRuntimeException.class, () -> greetingsClient.greet("Whatever"));
     assertThat(exception.getMessage(), is("FAILED_PRECONDITION: Failed some blah prerequisite"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -233,6 +261,9 @@ public class GrpcAcceptanceTest {
             .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Rob"))));
 
     assertThat(greetingsClient.manyGreetingsOneReply("Tom", "Uri", "Rob", "Mark"), is("Hi Rob"));
+
+    assertSomeErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -250,6 +281,9 @@ public class GrpcAcceptanceTest {
     assertThat(
         exception.getCause().getMessage(),
         is("UNIMPLEMENTED: No matching stub mapping found for gRPC request"));
+
+    assertSomeErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -264,6 +298,9 @@ public class GrpcAcceptanceTest {
             Exception.class, () -> greetingsClient.manyGreetingsOneReply("Tom", "Jerf", "Rob"));
     assertThat(exception.getCause(), instanceOf(StatusRuntimeException.class));
     assertThat(exception.getCause().getMessage(), is("INVALID_ARGUMENT: Jerf is not a valid name"));
+
+    assertSomeErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @ParameterizedTest
@@ -279,6 +316,9 @@ public class GrpcAcceptanceTest {
             Exception.class, () -> greetingsClient.manyGreetingsOneReply("Tom", "Jerf", "Rob"));
     assertThat(exception.getCause(), instanceOf(StatusRuntimeException.class));
     assertThat(exception.getCause().getMessage(), is(grpcStatus + ": " + message));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -288,6 +328,9 @@ public class GrpcAcceptanceTest {
             .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
 
     assertThat(greetingsClient.oneGreetingManyReplies("Tom"), hasItem("Hi Tom"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -296,6 +339,9 @@ public class GrpcAcceptanceTest {
         method("oneGreetingEmptyReply").willReturn(message(Empty.newBuilder())));
 
     assertThat(greetingsClient.oneGreetingEmptyReply("Tom"), is(true));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -315,6 +361,9 @@ public class GrpcAcceptanceTest {
     mockGreetingService
         .verify(0, "greeting")
         .withRequestMessage(equalToJson("{ \"name\":  \"Chris\" }"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -329,6 +378,9 @@ public class GrpcAcceptanceTest {
         .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Peter")));
 
     mockGreetingService.verify(0, "oneGreetingEmptyReply");
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -338,6 +390,9 @@ public class GrpcAcceptanceTest {
     Exception exception =
         assertThrows(StatusRuntimeException.class, () -> greetingsClient.greet("Alan"));
     assertThat(exception.getMessage(), startsWith("UNKNOWN"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -353,6 +408,9 @@ public class GrpcAcceptanceTest {
 
     assertThat(greeting, is("Delayed hello"));
     assertThat(stopwatch.elapsed(), greaterThanOrEqualTo(Duration.ofMillis(990L)));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -368,6 +426,9 @@ public class GrpcAcceptanceTest {
 
     assertThat(greeting, is("Delayed hello"));
     assertThat(stopwatch.elapsed(), greaterThanOrEqualTo(Duration.ofMillis(500L)));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -394,6 +455,9 @@ public class GrpcAcceptanceTest {
     anotherMockGreetingService.removeAllStubs();
 
     verifyDefaultMappings();
+
+    assertNoErrorMessages();
+    assertNoInfoMessages();
   }
 
   private void verifyDefaultMappings() {
@@ -459,6 +523,9 @@ public class GrpcAcceptanceTest {
     anotherMockGreetingService
         .verify(6, "anotherGreeting")
         .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom")));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -470,6 +537,9 @@ public class GrpcAcceptanceTest {
     String greeting = greetingsClient.greetAnyRequest();
 
     assertThat(greeting, is("Hiya"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -481,6 +551,9 @@ public class GrpcAcceptanceTest {
     String typeUrl = greetingsClient.greetAnyResponse();
 
     assertThat(typeUrl, is("type.googleapis.com/com.example.grpc.response.HelloResponse"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
   }
 
   @Test
@@ -494,6 +567,25 @@ public class GrpcAcceptanceTest {
     String typeUrl = greetingsClient.greetAnyResponse();
 
     assertThat(typeUrl, is("type.googleapis.com/com.example.grpc.response.HelloResponse"));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
+  }
+
+  private void assertNoInfoMessages() {
+    assertThat("Should not be any info messages", notifier.infoMessages, is(empty()));
+  }
+
+  private void assertSomeInfoMessages() {
+    assertThat("Should be some info messages", notifier.infoMessages, is(not(empty())));
+  }
+
+  private void assertNoErrorMessages() {
+    assertThat("Should not be any error messages", notifier.errorMessages, is(empty()));
+  }
+
+  private void assertSomeErrorMessages() {
+    assertThat("Should be some error messages", notifier.errorMessages, is(not(empty())));
   }
 
   @Test
