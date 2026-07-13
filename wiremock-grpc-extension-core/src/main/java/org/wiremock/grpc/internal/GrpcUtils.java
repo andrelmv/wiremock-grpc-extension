@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Thomas Akehurst
+ * Copyright (C) 2025-2026 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -146,6 +146,16 @@ public class GrpcUtils {
       JsonMessageConverter jsonMessageConverter,
       Supplier<ServerAddress> serverAddressSupplier,
       Notifier notifier) {
+    if (methodDescriptor.isClientStreaming() && methodDescriptor.isServerStreaming()) {
+      return ServerCalls.asyncBidiStreamingCall(
+          new BidiStreamingServerCallHandler(
+              stubRequestHandler,
+              serviceDescriptor,
+              methodDescriptor,
+              jsonMessageConverter,
+              serverAddressSupplier,
+              notifier));
+    }
     return methodDescriptor.isClientStreaming()
         ? ServerCalls.asyncClientStreamingCall(
             new ClientStreamingServerCallHandler(

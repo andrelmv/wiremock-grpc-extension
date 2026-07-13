@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023-2025 Thomas Akehurst
+ * Copyright (C) 2023-2026 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -318,6 +318,72 @@ public class GrpcAcceptanceTest {
     assertThat(exception.getCause().getMessage(), is(grpcStatus + ": " + message));
 
     assertNoErrorMessages();
+    assertSomeInfoMessages();
+  }
+
+  @Test
+  void respondsToEachMessageInBidiStreamingRequest() {
+    mockGreetingService.stubFor(
+        method("chat")
+            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
+            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
+    mockGreetingService.stubFor(
+        method("chat")
+            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Rob").build()))
+            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Rob"))));
+
+    assertThat(greetingsClient.chat("Tom", "Rob"), is(List.of("Hi Tom", "Hi Rob")));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
+  }
+
+  @Test
+  void respondsToSingleMessageBidiStreamingRequest() {
+    mockGreetingService.stubFor(
+        method("chat")
+            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
+            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
+
+    assertThat(greetingsClient.chat("Tom"), is(List.of("Hi Tom")));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
+  }
+
+  @Test
+  void throwsNotFoundWhenBidiStreamingMessageDoesNotMatch() {
+    mockGreetingService.stubFor(
+        method("chat")
+            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
+            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
+
+    Exception exception =
+        assertThrows(Exception.class, () -> greetingsClient.chat("Tom", "Unknown"));
+    assertThat(exception.getCause(), instanceOf(StatusRuntimeException.class));
+    assertThat(
+        exception.getCause().getMessage(),
+        is("UNIMPLEMENTED: No matching stub mapping found for gRPC request"));
+
+    assertSomeErrorMessages();
+    assertSomeInfoMessages();
+  }
+
+  @Test
+  void throwsNotFoundWhenFirstBidiStreamingMessageDoesNotMatch() {
+    mockGreetingService.stubFor(
+        method("chat")
+            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
+            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
+
+    Exception exception =
+        assertThrows(Exception.class, () -> greetingsClient.chat("Unknown", "Tom"));
+    assertThat(exception.getCause(), instanceOf(StatusRuntimeException.class));
+    assertThat(
+        exception.getCause().getMessage(),
+        is("UNIMPLEMENTED: No matching stub mapping found for gRPC request"));
+
+    assertSomeErrorMessages();
     assertSomeInfoMessages();
   }
 

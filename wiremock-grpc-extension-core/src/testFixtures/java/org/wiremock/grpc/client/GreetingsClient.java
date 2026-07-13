@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023-2025 Thomas Akehurst
+ * Copyright (C) 2023-2026 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -123,5 +123,40 @@ public class GreetingsClient {
     final Empty response =
         stub.oneGreetingEmptyReply(HelloRequest.newBuilder().setName(name).build());
     return response != null;
+  }
+
+  public List<String> chat(String... names) {
+    final List<HelloResponse> responses = new ArrayList<>();
+    final CompletableFuture<Void> completion = new CompletableFuture<>();
+
+    final StreamObserver<HelloRequest> requestObserver =
+        asyncStub.chat(
+            new StreamObserver<>() {
+              @Override
+              public void onNext(HelloResponse value) {
+                responses.add(value);
+              }
+
+              @Override
+              public void onError(Throwable t) {
+                completion.completeExceptionally(t);
+              }
+
+              @Override
+              public void onCompleted() {
+                completion.complete(null);
+              }
+            });
+
+    for (String name : names) {
+      requestObserver.onNext(HelloRequest.newBuilder().setName(name).build());
+    }
+    requestObserver.onCompleted();
+
+    Exceptions.uncheck(() -> completion.get(3, TimeUnit.SECONDS));
+
+    return responses.stream()
+        .map(HelloResponse::getGreeting)
+        .collect(Collectors.toUnmodifiableList());
   }
 }

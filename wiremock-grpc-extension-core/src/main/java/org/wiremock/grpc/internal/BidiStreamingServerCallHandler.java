@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023-2026 Thomas Akehurst
+ * Copyright (C) 2026 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,16 +23,16 @@ import com.google.protobuf.DynamicMessage;
 import io.grpc.Status;
 import io.grpc.stub.ServerCalls;
 import io.grpc.stub.StreamObserver;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import org.wiremock.grpc.dsl.WireMockGrpc;
 
-public class ClientStreamingServerCallHandler extends BaseCallHandler
-    implements ServerCalls.ClientStreamingMethod<DynamicMessage, DynamicMessage> {
+public class BidiStreamingServerCallHandler extends BaseCallHandler
+    implements ServerCalls.BidiStreamingMethod<DynamicMessage, DynamicMessage> {
 
   private final Notifier notifier;
 
-  public ClientStreamingServerCallHandler(
+  public BidiStreamingServerCallHandler(
       StubRequestHandler stubRequestHandler,
       Descriptors.ServiceDescriptor serviceDescriptor,
       Descriptors.MethodDescriptor methodDescriptor,
@@ -51,15 +51,12 @@ public class ClientStreamingServerCallHandler extends BaseCallHandler
   @Override
   public StreamObserver<DynamicMessage> invoke(StreamObserver<DynamicMessage> responseObserver) {
     final ServerAddress serverAddress = serverAddressSupplier.get();
-
-    final AtomicReference<DynamicMessage> firstResponse = new AtomicReference<>();
-    final AtomicReference<WireMockGrpc.Status> responseStatus = new AtomicReference<>();
-    final AtomicReference<String> statusReason = new AtomicReference<>();
+    final AtomicBoolean closed = new AtomicBoolean(false);
 
     return new StreamObserver<>() {
       @Override
       public void onNext(DynamicMessage request) {
-        if (firstResponse.get() != null) {
+        if (closed.get()) {
           return;
         }
 
@@ -77,21 +74,31 @@ public class ClientStreamingServerCallHandler extends BaseCallHandler
             new GrpcMessageMatcher.ResultHandler() {
               @Override
               public void onMatched(DynamicMessage response) {
-                responseStatus.set(WireMockGrpc.Status.OK);
-                firstResponse.set(response);
+                if (!closed.get()) {
+                  responseObserver.onNext(response);
+                }
               }
 
               @Override
               public void onGrpcError(WireMockGrpc.Status status, String reason) {
-                responseStatus.set(status);
-                statusReason.set(reason);
+                if (closed.compareAndSet(false, true)) {
+                  responseObserver.onError(
+                      Status.fromCodeValue(status.getValue())
+                          .withDescription(reason)
+                          .asRuntimeException());
+                }
               }
 
               @Override
               public void onNotFound() {
-                // 404 needs to be handled as a special case here because when using many
-                // requests, one reply not all the requests will match. We handle the 404 as
-                // a special case in the onCompleted method below.
+                if (closed.compareAndSet(false, true)) {
+                  final Pair<Status, String> notFoundStatusMapping =
+                      GrpcStatusUtils.errorHttpToGrpcStatusMappings.get(404);
+                  final Status grpcStatus = notFoundStatusMapping.a;
+
+                  responseObserver.onError(
+                      grpcStatus.withDescription(notFoundStatusMapping.b).asRuntimeException());
+                }
               }
             });
       }
@@ -103,21 +110,8 @@ public class ClientStreamingServerCallHandler extends BaseCallHandler
 
       @Override
       public void onCompleted() {
-        if (responseStatus.get() != null && responseStatus.get() == WireMockGrpc.Status.OK) {
-          responseObserver.onNext(firstResponse.get());
+        if (closed.compareAndSet(false, true)) {
           responseObserver.onCompleted();
-        } else if (responseStatus.get() != null && responseStatus.get() != WireMockGrpc.Status.OK) {
-          responseObserver.onError(
-              Status.fromCodeValue(responseStatus.get().getValue())
-                  .withDescription(statusReason.get())
-                  .asRuntimeException());
-        } else {
-          final Pair<Status, String> notFoundStatusMapping =
-              GrpcStatusUtils.errorHttpToGrpcStatusMappings.get(404);
-          final Status grpcStatus = notFoundStatusMapping.a;
-
-          responseObserver.onError(
-              grpcStatus.withDescription(notFoundStatusMapping.b).asRuntimeException());
         }
       }
     };

@@ -155,6 +155,7 @@ shadowJar {
   exclude 'META-INF/versions/17/**'
   exclude 'META-INF/versions/21/**'
   exclude 'META-INF/versions/22/**'
+  exclude 'META-INF/versions/25/**'
   exclude 'module-info.class'
   exclude 'handlebars-*.js'
   mergeServiceFiles()
