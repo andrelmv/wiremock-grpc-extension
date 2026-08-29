@@ -23,6 +23,8 @@ import com.google.protobuf.DynamicMessage;
 import io.grpc.Status;
 import io.grpc.stub.ServerCalls;
 import io.grpc.stub.StreamObserver;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import org.wiremock.grpc.dsl.WireMockGrpc;
@@ -31,6 +33,7 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
     implements ServerCalls.BidiStreamingMethod<DynamicMessage, DynamicMessage> {
 
   private final Notifier notifier;
+  private final List<DynamicMessage> receivedRequests = new ArrayList<>();
 
   public BidiStreamingServerCallHandler(
       StubRequestHandler stubRequestHandler,
@@ -59,10 +62,33 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
         if (closed.get()) {
           return;
         }
+        
+        // 1. Armazenar a requisição em vez de responder imediatamente
+        receivedRequests.add(request);
+      }
 
-        BaseCallHandler.CONTEXT.set(
-            new GrpcContext(serviceDescriptor, methodDescriptor, jsonMessageConverter, request));
+      @Override
+      public void onError(Throwable t) {
+        notifier.info("gRPC client closed the stream with an error: " + t.getMessage());
+        if (closed.compareAndSet(false, true)) {
+          responseObserver.onError(t);
+        }
+      }
 
+      @Override
+      public void onCompleted() {
+        if (closed.compareAndSet(false, true)) {
+          // 2. Processar todas as requisições armazenadas e responder em lote
+          processBatchResponse(responseObserver);
+        }
+      }
+    };
+  }
+
+  private void processBatchResponse(StreamObserver<DynamicMessage> responseObserver) {
+    for (DynamicMessage request : receivedRequests) {
+      // Para cada requisição, tentamos fazer o match e enviar a resposta
+      try {
         GrpcMessageMatcher.match(
             stubRequestHandler,
             serviceDescriptor,
@@ -74,46 +100,37 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
             new GrpcMessageMatcher.ResultHandler() {
               @Override
               public void onMatched(DynamicMessage response) {
-                if (!closed.get()) {
-                  responseObserver.onNext(response);
-                }
+                // Envia a resposta imediatamente após o match, mas dentro do fluxo de onCompleted
+                responseObserver.onNext(response);
               }
 
               @Override
               public void onGrpcError(WireMockGrpc.Status status, String reason) {
-                if (closed.compareAndSet(false, true)) {
-                  responseObserver.onError(
-                      Status.fromCodeValue(status.getValue())
-                          .withDescription(reason)
-                          .asRuntimeException());
-                }
+                // Se houver erro, encerra o stream com erro
+                responseObserver.onError(
+                    Status.fromCodeValue(status.getValue())
+                        .withDescription(reason)
+                        .asRuntimeException());
               }
 
               @Override
               public void onNotFound() {
-                if (closed.compareAndSet(false, true)) {
-                  final Pair<Status, String> notFoundStatusMapping =
-                      GrpcStatusUtils.errorHttpToGrpcStatusMappings.get(404);
-                  final Status grpcStatus = notFoundStatusMapping.a;
+                // Se não encontrar, encerra o stream com erro 404
+                final Pair<Status, String> notFoundStatusMapping =
+                    GrpcStatusUtils.errorHttpToGrpcStatusMappings.get(404);
+                final Status grpcStatus = notFoundStatusMapping.a;
 
-                  responseObserver.onError(
-                      grpcStatus.withDescription(notFoundStatusMapping.b).asRuntimeException());
-                }
+                responseObserver.onError(
+                    grpcStatus.withDescription(notFoundStatusMapping.b).asRuntimeException());
               }
             });
+      } catch (Exception e) {
+        // Captura qualquer exceção durante o processamento do batch
+        responseObserver.onError(e);
       }
-
-      @Override
-      public void onError(Throwable t) {
-        notifier.info("gRPC client closed the stream with an error: " + t.getMessage());
-      }
-
-      @Override
-      public void onCompleted() {
-        if (closed.compareAndSet(false, true)) {
-          responseObserver.onCompleted();
-        }
-      }
-    };
+    }
+    
+    // 3. Sinaliza o fim do stream após processar todas as requisições
+    responseObserver.onCompleted();
   }
 }
