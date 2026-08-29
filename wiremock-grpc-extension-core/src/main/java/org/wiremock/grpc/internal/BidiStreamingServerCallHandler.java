@@ -86,6 +86,9 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
   }
 
   private void processBatchResponse(StreamObserver<DynamicMessage> responseObserver) {
+    final List<String> errors = new ArrayList<>();
+    boolean hasError = false;
+
     for (DynamicMessage request : receivedRequests) {
       // Para cada requisição, tentamos fazer o match e enviar a resposta
       try {
@@ -106,31 +109,35 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
 
               @Override
               public void onGrpcError(WireMockGrpc.Status status, String reason) {
-                // Se houver erro, encerra o stream com erro
-                responseObserver.onError(
-                    Status.fromCodeValue(status.getValue())
-                        .withDescription(reason)
-                        .asRuntimeException());
+                // Se houver erro, registra o erro, mas não encerra o stream
+                errors.add("gRPC Error: " + status.name() + " - " + reason);
+                hasError = true;
               }
 
               @Override
               public void onNotFound() {
-                // Se não encontrar, encerra o stream com erro 404
+                // Se não encontrar, registra o erro, mas não encerra o stream
                 final Pair<Status, String> notFoundStatusMapping =
                     GrpcStatusUtils.errorHttpToGrpcStatusMappings.get(404);
-                final Status grpcStatus = notFoundStatusMapping.a;
-
-                responseObserver.onError(
-                    grpcStatus.withDescription(notFoundStatusMapping.b).asRuntimeException());
+                errors.add("Not Found (404): " + notFoundStatusMapping.b);
+                hasError = true;
               }
             });
       } catch (Exception e) {
         // Captura qualquer exceção durante o processamento do batch
-        responseObserver.onError(e);
+        errors.add("Processing Exception: " + e.getMessage());
+        hasError = true;
       }
     }
     
-    // 3. Sinaliza o fim do stream após processar todas as requisições
-    responseObserver.onCompleted();
+    if (hasError) {
+      // Se houver erros, consolida e envia um erro geral
+      String errorMessage = "Failed to process one or more requests in the batch. Errors: " + String.join("; ", errors);
+      final Status status = Status.INTERNAL;
+      responseObserver.onError(status.withDescription(errorMessage).asRuntimeException());
+    } else {
+      // Se tudo correu bem, sinaliza o fim do stream
+      responseObserver.onCompleted();
+    }
   }
 }
