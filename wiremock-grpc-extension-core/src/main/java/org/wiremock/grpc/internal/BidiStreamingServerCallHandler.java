@@ -33,7 +33,6 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
     implements ServerCalls.BidiStreamingMethod<DynamicMessage, DynamicMessage> {
 
   private final Notifier notifier;
-  private final List<DynamicMessage> receivedRequests = new ArrayList<>();
 
   public BidiStreamingServerCallHandler(
       StubRequestHandler stubRequestHandler,
@@ -56,14 +55,17 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
     final ServerAddress serverAddress = serverAddressSupplier.get();
     final AtomicBoolean closed = new AtomicBoolean(false);
 
+    // Buffer every inbound message; once the client half-closes, the whole stream is matched
+    // as one unit against a single stub whose response body is a JSON array. Kept local to this
+    // call so concurrent streams don't share state.
+    final List<DynamicMessage> receivedRequests = new ArrayList<>();
+
     return new StreamObserver<>() {
       @Override
       public void onNext(DynamicMessage request) {
         if (closed.get()) {
           return;
         }
-        
-        // 1. Armazenar a requisição em vez de responder imediatamente
         receivedRequests.add(request);
       }
 
@@ -78,66 +80,49 @@ public class BidiStreamingServerCallHandler extends BaseCallHandler
       @Override
       public void onCompleted() {
         if (closed.compareAndSet(false, true)) {
-          // 2. Processar todas as requisições armazenadas e responder em lote
-          processBatchResponse(responseObserver);
+          matchBatch(receivedRequests, responseObserver, serverAddress);
         }
       }
     };
   }
 
-  private void processBatchResponse(StreamObserver<DynamicMessage> responseObserver) {
-    final List<String> errors = new ArrayList<>();
-    boolean hasError = false;
+  private void matchBatch(
+      List<DynamicMessage> receivedRequests,
+      StreamObserver<DynamicMessage> responseObserver,
+      ServerAddress serverAddress) {
+    GrpcMessageMatcher.matchStream(
+        stubRequestHandler,
+        serviceDescriptor,
+        methodDescriptor,
+        jsonMessageConverter,
+        notifier,
+        serverAddress,
+        receivedRequests,
+        new GrpcMessageMatcher.StreamResultHandler() {
+          @Override
+          public void onMatched(List<DynamicMessage> responses) {
+            responses.forEach(responseObserver::onNext);
+            responseObserver.onCompleted();
+          }
 
-    for (DynamicMessage request : receivedRequests) {
-      // Para cada requisição, tentamos fazer o match e enviar a resposta
-      try {
-        GrpcMessageMatcher.match(
-            stubRequestHandler,
-            serviceDescriptor,
-            methodDescriptor,
-            jsonMessageConverter,
-            notifier,
-            serverAddress,
-            request,
-            new GrpcMessageMatcher.ResultHandler() {
-              @Override
-              public void onMatched(DynamicMessage response) {
-                // Envia a resposta imediatamente após o match, mas dentro do fluxo de onCompleted
-                responseObserver.onNext(response);
-              }
+          @Override
+          public void onGrpcError(WireMockGrpc.Status status, String reason) {
+            responseObserver.onError(
+                Status.fromCodeValue(status.getValue())
+                    .withDescription(reason)
+                    .asRuntimeException());
+          }
 
-              @Override
-              public void onGrpcError(WireMockGrpc.Status status, String reason) {
-                // Se houver erro, registra o erro, mas não encerra o stream
-                errors.add("gRPC Error: " + status.name() + " - " + reason);
-                hasError = true;
-              }
-
-              @Override
-              public void onNotFound() {
-                // Se não encontrar, registra o erro, mas não encerra o stream
-                final Pair<Status, String> notFoundStatusMapping =
-                    GrpcStatusUtils.errorHttpToGrpcStatusMappings.get(404);
-                errors.add("Not Found (404): " + notFoundStatusMapping.b);
-                hasError = true;
-              }
-            });
-      } catch (Exception e) {
-        // Captura qualquer exceção durante o processamento do batch
-        errors.add("Processing Exception: " + e.getMessage());
-        hasError = true;
-      }
-    }
-    
-    if (hasError) {
-      // Se houver erros, consolida e envia um erro geral
-      String errorMessage = "Failed to process one or more requests in the batch. Errors: " + String.join("; ", errors);
-      final Status status = Status.INTERNAL;
-      responseObserver.onError(status.withDescription(errorMessage).asRuntimeException());
-    } else {
-      // Se tudo correu bem, sinaliza o fim do stream
-      responseObserver.onCompleted();
-    }
+          @Override
+          public void onNotFound() {
+            final Pair<Status, String> notFoundStatusMapping =
+                GrpcStatusUtils.errorHttpToGrpcStatusMappings.get(404);
+            responseObserver.onError(
+                notFoundStatusMapping
+                    .a
+                    .withDescription(notFoundStatusMapping.b)
+                    .asRuntimeException());
+          }
+        });
   }
 }

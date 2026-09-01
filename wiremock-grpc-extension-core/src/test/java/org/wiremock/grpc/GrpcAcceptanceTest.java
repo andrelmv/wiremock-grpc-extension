@@ -48,8 +48,10 @@ import com.example.grpc.GreetingServiceGrpc;
 import com.example.grpc.request.HelloRequest;
 import com.example.grpc.response.HelloResponse;
 import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.common.Json;
 import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import com.google.common.base.Stopwatch;
 import com.google.protobuf.Empty;
 import io.grpc.ManagedChannel;
@@ -321,16 +323,36 @@ public class GrpcAcceptanceTest {
     assertSomeInfoMessages();
   }
 
+  // A bidi-streaming stub is a single WireMock stub-mapping JSON document (as on
+  // wiremock.org/docs/stubbing): the whole client stream is buffered and dispatched as ONE
+  // POST /<service>/<method> whose body is a JSON array of every message received, and the
+  // stub's response body is a JSON array that is streamed back message by message.
+  private static void stubChat(String requestArrayJson, String responseArrayJson) {
+    wm.addStubMapping(
+        Json.read(
+            """
+            {
+              "request": {
+                "method": "POST",
+                "urlPath": "/com.example.grpc.GreetingService/chat",
+                "bodyPatterns": [ { "equalToJson": %s } ]
+              },
+              "response": {
+                "status": 200,
+                "headers": { "Content-Type": "application/json" },
+                "jsonBody": %s
+              }
+            }
+            """
+                .formatted(requestArrayJson, responseArrayJson),
+            StubMapping.class));
+  }
+
   @Test
-  void respondsToEachMessageInBidiStreamingRequest() {
-    mockGreetingService.stubFor(
-        method("chat")
-            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
-            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
-    mockGreetingService.stubFor(
-        method("chat")
-            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Rob").build()))
-            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Rob"))));
+  void respondsToBidiStreamingRequestFromJsonArrayStub() {
+    stubChat(
+        "[ { \"name\": \"Tom\" }, { \"name\": \"Rob\" } ]",
+        "[ { \"greeting\": \"Hi Tom\" }, { \"greeting\": \"Hi Rob\" } ]");
 
     assertThat(greetingsClient.chat("Tom", "Rob"), is(List.of("Hi Tom", "Hi Rob")));
 
@@ -340,10 +362,7 @@ public class GrpcAcceptanceTest {
 
   @Test
   void respondsToSingleMessageBidiStreamingRequest() {
-    mockGreetingService.stubFor(
-        method("chat")
-            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
-            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
+    stubChat("[ { \"name\": \"Tom\" } ]", "[ { \"greeting\": \"Hi Tom\" } ]");
 
     assertThat(greetingsClient.chat("Tom"), is(List.of("Hi Tom")));
 
@@ -352,11 +371,20 @@ public class GrpcAcceptanceTest {
   }
 
   @Test
-  void throwsNotFoundWhenBidiStreamingMessageDoesNotMatch() {
-    mockGreetingService.stubFor(
-        method("chat")
-            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
-            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
+  void bidiStreamingResponseArrayIsIndependentOfRequestArrayLength() {
+    stubChat(
+        "[ { \"name\": \"Tom\" } ]",
+        "[ { \"greeting\": \"Hi Tom\" }, { \"greeting\": \"Bye Tom\" } ]");
+
+    assertThat(greetingsClient.chat("Tom"), is(List.of("Hi Tom", "Bye Tom")));
+
+    assertNoErrorMessages();
+    assertSomeInfoMessages();
+  }
+
+  @Test
+  void throwsNotFoundWhenBidiStreamingArrayHasExtraMessage() {
+    stubChat("[ { \"name\": \"Tom\" } ]", "[ { \"greeting\": \"Hi Tom\" } ]");
 
     Exception exception =
         assertThrows(Exception.class, () -> greetingsClient.chat("Tom", "Unknown"));
@@ -370,14 +398,12 @@ public class GrpcAcceptanceTest {
   }
 
   @Test
-  void throwsNotFoundWhenFirstBidiStreamingMessageDoesNotMatch() {
-    mockGreetingService.stubFor(
-        method("chat")
-            .withRequestMessage(equalToMessage(HelloRequest.newBuilder().setName("Tom").build()))
-            .willReturn(message(HelloResponse.newBuilder().setGreeting("Hi Tom"))));
+  void throwsNotFoundWhenBidiStreamingArrayOrderDiffers() {
+    stubChat(
+        "[ { \"name\": \"Tom\" }, { \"name\": \"Rob\" } ]",
+        "[ { \"greeting\": \"Hi Tom\" }, { \"greeting\": \"Hi Rob\" } ]");
 
-    Exception exception =
-        assertThrows(Exception.class, () -> greetingsClient.chat("Unknown", "Tom"));
+    Exception exception = assertThrows(Exception.class, () -> greetingsClient.chat("Rob", "Tom"));
     assertThat(exception.getCause(), instanceOf(StatusRuntimeException.class));
     assertThat(
         exception.getCause().getMessage(),
